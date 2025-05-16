@@ -24,6 +24,10 @@ function Invoke-HostRecon{
 
     This flag specifies the number of "top ports" to be scanned outbound from the system. Valid entries are 1-128. Default is 50.
 
+    .PARAMETER ExportCSV
+
+    If this flag is added, the user will be prompted to export results to a CSV file. Default location is c:\temp\results.csv.
+
     .Example
 
     C:\PS> Invoke-HostRecon
@@ -39,6 +43,14 @@ function Invoke-HostRecon{
     Description
     -----------
     This command will run a number of checks on the local system including the retrieval of local system information (netstat, common security products, scheduled tasks, local admins group, LAPS, etc), and domain information (Domain Admins group, DC's, password policy). Additionally, it will perform an outbound portscan on the top 128 ports to allports.exposed to assist in determining any ports that might be allowed outbound for C2 communications.
+
+    .Example
+
+    C:\PS> Invoke-HostRecon -ExportCSV
+
+    Description
+    -----------
+    This command will run a number of checks on the local system and prompt the user to export the results to a CSV file. The default location is c:\temp\results.csv, but the user can specify a different location.
 
     #>
 
@@ -56,15 +68,28 @@ function Invoke-HostRecon{
         [switch]
         $DisableDomainChecks = $false,
 
-        [ValidateRange(1,65535)][String[]]$Portlist = ""
+        [ValidateRange(1,65535)][String[]]$Portlist = "",
+
+        [Parameter(Position = 3, Mandatory = $false)]
+        [switch]
+        $ExportCSV = $false
 
     )
+
+    # Create an array to store all results for CSV export
+    $global:AllResults = @()
 
     #Hostname
 
     Write-Output "[*] Hostname"
     $Computer = $env:COMPUTERNAME
     $Computer
+    # Add to results for CSV export
+    $global:AllResults += [PSCustomObject]@{
+        Category = "System Information"
+        Item = "Hostname"
+        Value = $Computer
+    }
     Write-Output "`n"
 
     #IP Information
@@ -72,6 +97,17 @@ function Invoke-HostRecon{
     Write-Output "[*] IP Address Info"
     $ipinfo = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = True'| Select-Object IPAddress,Description | Format-Table -Wrap | Out-String
     $ipinfo
+    # Add to results for CSV export
+    $ipinfoData = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = True'
+    foreach ($adapter in $ipinfoData) {
+        foreach ($ip in $adapter.IPAddress) {
+            $global:AllResults += [PSCustomObject]@{
+                Category = "Network"
+                Item = "IP Address ($($adapter.Description))"
+                Value = $ip
+            }
+        }
+    }
     Write-Output "`n"
 
     #Current user and domain
@@ -81,6 +117,17 @@ function Invoke-HostRecon{
     $currentuser = $env:USERNAME
     Write-Output "Domain = $env:USERDOMAIN"
     Write-Output "Current User = $env:USERNAME"
+    # Add to results for CSV export
+    $global:AllResults += [PSCustomObject]@{
+        Category = "User Information"
+        Item = "Domain"
+        Value = $env:USERDOMAIN
+    }
+    $global:AllResults += [PSCustomObject]@{
+        Category = "User Information"
+        Item = "Current User"
+        Value = $env:USERNAME
+    }
     Write-Output "`n"
 
     #All local users
@@ -88,6 +135,14 @@ function Invoke-HostRecon{
     Write-Output "[*] Local Users of this system"
     $locals = Get-WmiObject -Class Win32_UserAccount -Filter  "LocalAccount='True'" | Select-Object Name 
     $locals
+    # Add to results for CSV export
+    foreach ($user in $locals) {
+        $global:AllResults += [PSCustomObject]@{
+            Category = "User Information"
+            Item = "Local User"
+            Value = $user.Name
+        }
+    }
     Write-Output "`n"
 
     #Local Admins group
@@ -95,6 +150,15 @@ function Invoke-HostRecon{
     Write-Output "[*] Local Admins of this system"
     $Admins = Get-WmiObject win32_groupuser | Where-Object { $_.GroupComponent -match 'administrators' -and ($_.GroupComponent -match "Domain=`"$env:COMPUTERNAME`"")} | ForEach-Object {[wmi]$_.PartComponent } | Select-Object Caption,SID | format-table -Wrap | Out-String
     $Admins
+    # Add to results for CSV export
+    $AdminsData = Get-WmiObject win32_groupuser | Where-Object { $_.GroupComponent -match 'administrators' -and ($_.GroupComponent -match "Domain=`"$env:COMPUTERNAME`"")} | ForEach-Object {[wmi]$_.PartComponent } | Select-Object Caption,SID
+    foreach ($admin in $AdminsData) {
+        $global:AllResults += [PSCustomObject]@{
+            Category = "User Information"
+            Item = "Local Admin"
+            Value = $admin.Caption
+        }
+    }
     Write-Output "`n"
 
     #Netstat Information
@@ -113,6 +177,13 @@ function Invoke-HostRecon{
             $OutputObj | Add-Member -MemberType NoteProperty -Name "State" -Value $Connection.State            
             $OutputObj | Add-Member -MemberType NoteProperty -Name "IPV4Or6" -Value $IPType            
             $objarray += $OutputObj
+            
+            # Add to results for CSV export
+            $global:AllResults += [PSCustomObject]@{
+                Category = "Network Connections"
+                Item = "TCP Connection"
+                Value = "$($Connection.LocalEndPoint.Address):$($Connection.LocalEndPoint.Port) -> $($Connection.RemoteEndPoint.Address):$($Connection.RemoteEndPoint.Port) ($($Connection.State))"
+            }
             }
             $activeconnections = $objarray | Format-Table -Wrap | Out-String
             $activeconnections
@@ -126,7 +197,15 @@ function Invoke-HostRecon{
             $OutputObjListen | Add-Member -MemberType NoteProperty -Name "LocalAddress" -Value $connection.Address            
             $OutputObjListen | Add-Member -MemberType NoteProperty -Name "ListeningPort" -Value $Connection.Port            
             $OutputObjListen | Add-Member -MemberType NoteProperty -Name "IPV4Or6" -Value $IPType            
-            $objarraylisten += $OutputObjListen }
+            $objarraylisten += $OutputObjListen 
+            
+            # Add to results for CSV export
+            $global:AllResults += [PSCustomObject]@{
+                Category = "Network Connections"
+                Item = "TCP Listener"
+                Value = "$($Connection.Address):$($Connection.Port)"
+            }
+            }
             $listeners = $objarraylisten | Format-Table -Wrap | Out-String
             $listeners
         
@@ -197,10 +276,22 @@ function Invoke-HostRecon{
     If ($AV -ne "")
         {
             Write-Output "The following AntiVirus product appears to be installed:" $AV.displayName
+            # Add to results for CSV export
+            $global:AllResults += [PSCustomObject]@{
+                Category = "Security Products"
+                Item = "AntiVirus"
+                Value = $AV.displayName
+            }
         }
     If ($AV -eq "")
         {
             Write-Output "No AV detected."
+            # Add to results for CSV export
+            $global:AllResults += [PSCustomObject]@{
+                Category = "Security Products"
+                Item = "AntiVirus"
+                Value = "None detected"
+            }
         }
     Write-Output "`n"
 
@@ -215,10 +306,22 @@ function Invoke-HostRecon{
     If($fwenabled -eq $true)
         {
             Write-Output "The local firewall appears to be enabled."
+            # Add to results for CSV export
+            $global:AllResults += [PSCustomObject]@{
+                Category = "Security Products"
+                Item = "Firewall"
+                Value = "Enabled"
+            }
         }
     If($fwenabled -ne $true)
         {
             Write-Output "The local firewall appears to be disabled."
+            # Add to results for CSV export
+            $global:AllResults += [PSCustomObject]@{
+                Category = "Security Products"
+                Item = "Firewall"
+                Value = "Disabled"
+            }
         }
     Write-Output "`n"
 
@@ -428,6 +531,42 @@ function Invoke-HostRecon{
     }
     }
 
+    # Handle CSV export if the ExportCSV parameter was specified
+    If($ExportCSV)
+    {
+        $exportChoice = Read-Host -Prompt "Do you want to export results to CSV? (Y/N)"
+        
+        if ($exportChoice -eq "Y" -or $exportChoice -eq "y")
+        {
+            $defaultPath = "c:\temp\results.csv"
+            $customPath = Read-Host -Prompt "Enter the path to save the CSV file or press Enter to use the default ($defaultPath)"
+            
+            $csvPath = if ([string]::IsNullOrWhiteSpace($customPath)) { $defaultPath } else { $customPath }
+            
+            # Create directory if it doesn't exist
+            $directory = Split-Path -Path $csvPath -Parent
+            if (!(Test-Path -Path $directory))
+            {
+                try {
+                    New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
+                    Write-Output "Created directory: $directory"
+                }
+                catch {
+                    Write-Output "Error creating directory: $_"
+                    return
+                }
+            }
+            
+            try {
+                # Export results to CSV
+                $global:AllResults | Export-Csv -Path $csvPath -NoTypeInformation -ErrorAction Stop
+                Write-Output "Results exported to $csvPath"
+            }
+            catch {
+                Write-Output "Error exporting to CSV: $_"
+            }
+        }
+    }
 }
 
 
@@ -539,7 +678,7 @@ Disable the random delay between connection attempts.
         $wait = $connect.AsyncWaitHandle.WaitOne($Timeout,$false)
         if (!$wait) {
             $error.clear()
-            $tcp.close()
+            $tcp.cloase()
             $temp.Status = "closed"
         }
         else {
