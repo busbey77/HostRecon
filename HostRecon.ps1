@@ -4,17 +4,18 @@ function Invoke-HostRecon{
 
     .SYNOPSIS
 
-    This function runs a number of checks on a system to help provide situational awareness to a penetration tester during the reconnaissance phase. It gathers information about the local system, users, and domain information. It does not use any 'net', 'ipconfig', 'whoami', 'netstat', or other system commands to help avoid detection.
+    A simplified version of the original HostRecon script that runs essential checks on a system to help provide situational awareness to a penetration tester during the reconnaissance phase. It gathers core information about the local system, users, and domain information while maintaining a lean profile.
 
     HostRecon Function: Invoke-HostRecon
     Author: Beau Bullock (@dafthack) with credit to Joff Thyer (@joff_thyer) for the portscan module.
+    Simplified by: Cline
     License: BSD 3-Clause
     Required Dependencies: None
     Optional Dependencies: None
     
     .DESCRIPTION
 
-    This function runs a number of checks on a system to help provide situational awareness to a penetration tester during the reconnaissance phase. It gathers information about the local system, users, and domain information. It does not use any 'net', 'ipconfig', 'whoami', 'netstat', or other system commands to help avoid detection.
+    This function runs essential checks on a system to help provide situational awareness to a penetration tester during the reconnaissance phase. It gathers core information about the local system, users, and domain information. It does not use any 'net', 'ipconfig', 'whoami', 'netstat', or other system commands to help avoid detection.
 
     .PARAMETER Portscan
 
@@ -24,9 +25,13 @@ function Invoke-HostRecon{
 
     This flag specifies the number of "top ports" to be scanned outbound from the system. Valid entries are 1-128. Default is 50.
 
+    .PARAMETER DisableDomainChecks
+
+    If this flag is added, domain-related checks will be skipped.
+
     .PARAMETER ExportCSV
 
-    If this flag is added, the user will be prompted to export results to a CSV file. Default location is c:\temp\results.csv.
+    If this flag is added, results will be exported to a CSV file. Default location is c:\temp\hostrecon_results_[timestamp].csv.
 
     .Example
 
@@ -34,15 +39,15 @@ function Invoke-HostRecon{
 
     Description
     -----------
-    This command will run a number of checks on the local system including the retrieval of local system information (netstat, common security products, scheduled tasks, local admins group, LAPS, etc), and domain information (Domain Admins group, DC's, password policy).
+    This command will run essential checks on the local system including system information, user details, security products, and domain information.
 
     .Example
 
-    C:\PS> Invoke-HostRecon -Portscan -TopPorts 128
+    C:\PS> Invoke-HostRecon -Portscan -TopPorts 20
 
     Description
     -----------
-    This command will run a number of checks on the local system including the retrieval of local system information (netstat, common security products, scheduled tasks, local admins group, LAPS, etc), and domain information (Domain Admins group, DC's, password policy). Additionally, it will perform an outbound portscan on the top 128 ports to allports.exposed to assist in determining any ports that might be allowed outbound for C2 communications.
+    This command will run essential checks and perform an outbound portscan on the top 20 ports to allports.exposed.
 
     .Example
 
@@ -50,12 +55,11 @@ function Invoke-HostRecon{
 
     Description
     -----------
-    This command will run a number of checks on the local system and prompt the user to export the results to a CSV file. The default location is c:\temp\results.csv, but the user can specify a different location.
+    This command will run essential checks and export the results to a CSV file.
 
     #>
 
     Param(
-        
         [Parameter(Position = 0, Mandatory = $false)]
         [switch]
         $Portscan,
@@ -73,34 +77,33 @@ function Invoke-HostRecon{
         [Parameter(Position = 3, Mandatory = $false)]
         [switch]
         $ExportCSV = $false
-
     )
 
     # Create an array to store all results for CSV export
     $global:AllResults = @()
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $defaultCSVPath = "c:\temp\hostrecon_results_$timestamp.csv"
+
+    Write-Output "[+] HostRecon - Simplified Reconnaissance Tool"
+    Write-Output "[+] Starting scan at $(Get-Date)"
+    Write-Output ""
 
     #Hostname
-
-    Write-Output "[*] Hostname"
+    Write-Output "[*] System Information"
     $Computer = $env:COMPUTERNAME
-    $Computer
-    # Add to results for CSV export
+    Write-Output "Hostname: $Computer"
     $global:AllResults += [PSCustomObject]@{
         Category = "System Information"
         Item = "Hostname"
         Value = $Computer
     }
-    Write-Output "`n"
 
     #IP Information
-
-    Write-Output "[*] IP Address Info"
-    $ipinfo = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = True'| Select-Object IPAddress,Description | Format-Table -Wrap | Out-String
-    $ipinfo
-    # Add to results for CSV export
     $ipinfoData = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = True'
+    Write-Output "IP Addresses:"
     foreach ($adapter in $ipinfoData) {
         foreach ($ip in $adapter.IPAddress) {
+            Write-Output "- $ip ($($adapter.Description))"
             $global:AllResults += [PSCustomObject]@{
                 Category = "Network"
                 Item = "IP Address ($($adapter.Description))"
@@ -108,465 +111,210 @@ function Invoke-HostRecon{
             }
         }
     }
-    Write-Output "`n"
+    Write-Output ""
 
     #Current user and domain
-
-    Write-Output "[*] Current Domain and Username"
-
+    Write-Output "[*] User Information"
     $currentuser = $env:USERNAME
-    Write-Output "Domain = $env:USERDOMAIN"
-    Write-Output "Current User = $env:USERNAME"
-    # Add to results for CSV export
+    $domain = $env:USERDOMAIN
+    Write-Output "Domain: $domain"
+    Write-Output "Current User: $currentuser"
     $global:AllResults += [PSCustomObject]@{
         Category = "User Information"
         Item = "Domain"
-        Value = $env:USERDOMAIN
+        Value = $domain
     }
     $global:AllResults += [PSCustomObject]@{
         Category = "User Information"
         Item = "Current User"
-        Value = $env:USERNAME
+        Value = $currentuser
     }
-    Write-Output "`n"
-
-    #All local users
-
-    Write-Output "[*] Local Users of this system"
-    $locals = Get-WmiObject -Class Win32_UserAccount -Filter  "LocalAccount='True'" | Select-Object Name 
-    $locals
-    # Add to results for CSV export
-    foreach ($user in $locals) {
-        $global:AllResults += [PSCustomObject]@{
-            Category = "User Information"
-            Item = "Local User"
-            Value = $user.Name
-        }
-    }
-    Write-Output "`n"
 
     #Local Admins group
-
-    Write-Output "[*] Local Admins of this system"
-    $Admins = Get-WmiObject win32_groupuser | Where-Object { $_.GroupComponent -match 'administrators' -and ($_.GroupComponent -match "Domain=`"$env:COMPUTERNAME`"")} | ForEach-Object {[wmi]$_.PartComponent } | Select-Object Caption,SID | format-table -Wrap | Out-String
-    $Admins
-    # Add to results for CSV export
+    Write-Output "Local Administrators:"
     $AdminsData = Get-WmiObject win32_groupuser | Where-Object { $_.GroupComponent -match 'administrators' -and ($_.GroupComponent -match "Domain=`"$env:COMPUTERNAME`"")} | ForEach-Object {[wmi]$_.PartComponent } | Select-Object Caption,SID
     foreach ($admin in $AdminsData) {
+        Write-Output "- $($admin.Caption)"
         $global:AllResults += [PSCustomObject]@{
             Category = "User Information"
             Item = "Local Admin"
             Value = $admin.Caption
         }
     }
-    Write-Output "`n"
+    Write-Output ""
 
-    #Netstat Information
-    #Some code here borrowed from: http://techibee.com/powershell/query-list-of-listening-ports-in-windows-using-powershell/2344
-        Write-Output "[*] Active Network Connections"
-        $TCPProperties = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()            
-        $Connections = $TCPProperties.GetActiveTcpConnections()            
-        $objarray = @()
-        foreach($Connection in $Connections) {            
-            if($Connection.LocalEndPoint.AddressFamily -eq "InterNetwork" ) { $IPType = "IPv4" } else { $IPType = "IPv6" }            
-            $OutputObj = New-Object -TypeName PSobject            
-            $OutputObj | Add-Member -MemberType NoteProperty -Name "LocalAddress" -Value $Connection.LocalEndPoint.Address            
-            $OutputObj | Add-Member -MemberType NoteProperty -Name "LocalPort" -Value $Connection.LocalEndPoint.Port            
-            $OutputObj | Add-Member -MemberType NoteProperty -Name "RemoteAddress" -Value $Connection.RemoteEndPoint.Address            
-            $OutputObj | Add-Member -MemberType NoteProperty -Name "RemotePort" -Value $Connection.RemoteEndPoint.Port            
-            $OutputObj | Add-Member -MemberType NoteProperty -Name "State" -Value $Connection.State            
-            $OutputObj | Add-Member -MemberType NoteProperty -Name "IPV4Or6" -Value $IPType            
-            $objarray += $OutputObj
+    #Active Network Connections (simplified)
+    Write-Output "[*] Active Network Connections"
+    $TCPProperties = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()            
+    $Connections = $TCPProperties.GetActiveTcpConnections()
+    
+    $connectionCount = 0
+    foreach($Connection in $Connections) {
+        if ($Connection.State -eq "Established") {
+            $connectionCount++
+            $localIP = $Connection.LocalEndPoint.Address
+            $localPort = $Connection.LocalEndPoint.Port
+            $remoteIP = $Connection.RemoteEndPoint.Address
+            $remotePort = $Connection.RemoteEndPoint.Port
             
-            # Add to results for CSV export
+            Write-Output "- $localIP`:$localPort -> $remoteIP`:$remotePort"
+            
             $global:AllResults += [PSCustomObject]@{
                 Category = "Network Connections"
                 Item = "TCP Connection"
-                Value = "$($Connection.LocalEndPoint.Address):$($Connection.LocalEndPoint.Port) -> $($Connection.RemoteEndPoint.Address):$($Connection.RemoteEndPoint.Port) ($($Connection.State))"
+                Value = "$localIP`:$localPort -> $remoteIP`:$remotePort"
             }
-            }
-            $activeconnections = $objarray | Format-Table -Wrap | Out-String
-            $activeconnections
-
-       Write-Output "[*] Active TCP Listeners"            
-        $ListenConnections = $TCPProperties.GetActiveTcpListeners()            
-        $objarraylisten = @()
-            foreach($Connection in $ListenConnections) {            
-            if($Connection.address.AddressFamily -eq "InterNetwork" ) { $IPType = "IPv4" } else { $IPType = "IPv6" }                 
-            $OutputObjListen = New-Object -TypeName PSobject            
-            $OutputObjListen | Add-Member -MemberType NoteProperty -Name "LocalAddress" -Value $connection.Address            
-            $OutputObjListen | Add-Member -MemberType NoteProperty -Name "ListeningPort" -Value $Connection.Port            
-            $OutputObjListen | Add-Member -MemberType NoteProperty -Name "IPV4Or6" -Value $IPType            
-            $objarraylisten += $OutputObjListen 
-            
-            # Add to results for CSV export
-            $global:AllResults += [PSCustomObject]@{
-                Category = "Network Connections"
-                Item = "TCP Listener"
-                Value = "$($Connection.Address):$($Connection.Port)"
-            }
-            }
-            $listeners = $objarraylisten | Format-Table -Wrap | Out-String
-            $listeners
-        
-    Write-Output "`n"
-
-    #DNS Cache Information
-
-    Write-Output "[*] DNS Cache"
-
-    try{
-    $dnscache = Get-WmiObject -query "Select * from MSFT_DNSClientCache" -Namespace "root\standardcimv2" -ErrorAction stop | Select-Object Entry,Name,Data | Format-Table -Wrap | Out-String
-    $dnscache
+        }
     }
-    catch
-        {
-        Write-Output "There was an error retrieving the DNS cache."
+    Write-Output "Total established connections: $connectionCount"
+    Write-Output ""
+
+    #Security Products
+    Write-Output "[*] Security Products"
+
+    # Check for AV
+    $AV = Get-WmiObject -Namespace "root\SecurityCenter2" -Query "SELECT * FROM AntiVirusProduct" -ErrorAction SilentlyContinue
+    if ($AV) {
+        Write-Output "AntiVirus: $($AV.displayName)"
+        $global:AllResults += [PSCustomObject]@{
+            Category = "Security Products"
+            Item = "AntiVirus"
+            Value = $AV.displayName
         }
-    Write-Output "`n"
-
-    #Shares
-
-    Write-Output "[*] Share listing"
-    $shares = @()
-    $shares = Get-WmiObject -Class Win32_Share | Format-Table -Wrap | Out-String
-    $shares
-    Write-Output "`n"
-
-    #Scheduled Tasks
-
-    Write-Output "[*] List of scheduled tasks"
-    $schedule = new-object -com("Schedule.Service")
-    $schedule.connect() 
-    $tasks = $schedule.getfolder("\").gettasks(0) | Select-Object Name | Format-Table -Wrap | Out-String
-    If ($tasks.count -eq 0)
-        {
-        Write-Output "[*] Task scheduler appears to be empty"
+    } else {
+        Write-Output "AntiVirus: None detected"
+        $global:AllResults += [PSCustomObject]@{
+            Category = "Security Products"
+            Item = "AntiVirus"
+            Value = "None detected"
         }
-    If ($tasks.count -ne 0)
-        {
-        $tasks
-        }
-    Write-Output "`n"
+    }
 
-    #Proxy information
-
-    Write-Output "[*] Proxy Info"
-    $proxyenabled = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings').proxyEnable
-    $proxyserver = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings').proxyServer
-
-    If ($proxyenabled -eq 1)
-        {
-            Write-Output "A system proxy appears to be enabled."
-            Write-Output "System proxy located at: $proxyserver"
-        }
-    Elseif($proxyenabled -eq 0)
-        {
-            Write-Output "There does not appear to be a system proxy enabled."
-        }
-    Write-Output "`n"
-
-    #Getting AntiVirus Information
-
-
-    Write-Output "[*] Checking if AV is installed"
-
-    $AV = Get-WmiObject -Namespace "root\SecurityCenter2" -Query "SELECT * FROM AntiVirusProduct" 
-
-    If ($AV -ne "")
-        {
-            Write-Output "The following AntiVirus product appears to be installed:" $AV.displayName
-            # Add to results for CSV export
-            $global:AllResults += [PSCustomObject]@{
-                Category = "Security Products"
-                Item = "AntiVirus"
-                Value = $AV.displayName
-            }
-        }
-    If ($AV -eq "")
-        {
-            Write-Output "No AV detected."
-            # Add to results for CSV export
-            $global:AllResults += [PSCustomObject]@{
-                Category = "Security Products"
-                Item = "AntiVirus"
-                Value = "None detected"
-            }
-        }
-    Write-Output "`n"
-
-    #Getting Local Firewall Status
-
-    Write-Output "[*] Checking local firewall status."
+    # Check Firewall
     $HKLM = 2147483650
-    $reg = get-wmiobject -list -namespace root\default -computer $computer | where-object { $_.name -eq "StdRegProv" }
+    $reg = get-wmiobject -list -namespace root\default | where-object { $_.name -eq "StdRegProv" }
     $firewallEnabled = $reg.GetDwordValue($HKLM, "System\ControlSet001\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile","EnableFirewall")
     $fwenabled = [bool]($firewallEnabled.uValue)
 
-    If($fwenabled -eq $true)
-        {
-            Write-Output "The local firewall appears to be enabled."
-            # Add to results for CSV export
-            $global:AllResults += [PSCustomObject]@{
-                Category = "Security Products"
-                Item = "Firewall"
-                Value = "Enabled"
-            }
-        }
-    If($fwenabled -ne $true)
-        {
-            Write-Output "The local firewall appears to be disabled."
-            # Add to results for CSV export
-            $global:AllResults += [PSCustomObject]@{
-                Category = "Security Products"
-                Item = "Firewall"
-                Value = "Disabled"
-            }
-        }
-    Write-Output "`n"
+    Write-Output "Firewall: $(if($fwenabled){"Enabled"}else{"Disabled"})"
+    $global:AllResults += [PSCustomObject]@{
+        Category = "Security Products"
+        Item = "Firewall"
+        Value = if($fwenabled){"Enabled"}else{"Disabled"}
+    }
 
-    #Checking for Local Admin Password Solution (LAPS)
-
-    Write-Output "[*] Checking for Local Admin Password Solution (LAPS)"
-    try
-        {
+    # Check for LAPS
+    try {
         $lapsfile = Get-ChildItem "$env:ProgramFiles\LAPS\CSE\Admpwd.dll" -ErrorAction Stop
-        if ($lapsfile)
-            {
-            Write-Output "The LAPS DLL (Admpwd.dll) was found. Local Admin password randomization may be in use."
-            }
+        Write-Output "LAPS: Installed"
+        $global:AllResults += [PSCustomObject]@{
+            Category = "Security Products"
+            Item = "LAPS"
+            Value = "Installed"
         }
-    catch
-        {
-        Write-Output "The LAPS DLL was not found."
+    } catch {
+        Write-Output "LAPS: Not installed"
+        $global:AllResults += [PSCustomObject]@{
+            Category = "Security Products"
+            Item = "LAPS"
+            Value = "Not installed"
         }
-    Write-Output "`n"
+    }
 
-    #Process Information
-
-    Write-Output "[*] Running Processes"
-
-    $processes = Get-Process | Select-Object ProcessName,Id,Description,Path 
-    $processout = $processes | Format-Table -Wrap | Out-String
-    $processout
-    Write-Output "`n"
-
-    #Checking for common security products
-
-    Write-Output "[*] Checking for Sysinternals Sysmon"
-    try
-        {
+    # Check for Sysmon
+    try {
         $sysmondrv = Get-ChildItem "$env:SystemRoot\sysmondrv.sys" -ErrorAction Stop
-        if ($sysmondrv)
-            {
-            Write-Output "The Sysmon driver $($sysmondrv.VersionInfo.FileVersion) (sysmondrv.sys) was found. System activity may be monitored."
-            }
+        Write-Output "Sysmon: Installed (Version: $($sysmondrv.VersionInfo.FileVersion))"
+        $global:AllResults += [PSCustomObject]@{
+            Category = "Security Products"
+            Item = "Sysmon"
+            Value = "Installed (Version: $($sysmondrv.VersionInfo.FileVersion))"
         }
-    catch
-        {
-        Write-Output "The Sysmon driver was not found."
+    } catch {
+        Write-Output "Sysmon: Not installed"
+        $global:AllResults += [PSCustomObject]@{
+            Category = "Security Products"
+            Item = "Sysmon"
+            Value = "Not installed"
         }
-    Write-Output "`n"
-
-    Write-Output "[*] Checking for common security product processes"
-    $processnames = $processes | Select-Object ProcessName
-    Foreach ($ps in $processnames)
-            {
-            #AV
-            if ($ps.ProcessName -like "*mcshield*")
-                {
-                Write-Output ("Possible McAfee AV process " + $ps.ProcessName + " is running.")
-                }
-            if (($ps.ProcessName -like "*windefend*") -or ($ps.ProcessName -like "*MSASCui*") -or ($ps.ProcessName -like "*msmpeng*") -or ($ps.ProcessName -like "*msmpsvc*"))
-                {
-                Write-Output ("Possible Windows Defender AV process " + $ps.ProcessName + " is running.")
-                }
-            if ($ps.ProcessName -like "*WRSA*")
-                {
-                Write-Output ("Possible WebRoot AV process " + $ps.ProcessName + " is running.")
-                }
-            if ($ps.ProcessName -like "*savservice*")
-                {
-                Write-Output ("Possible Sophos AV process " + $ps.ProcessName + " is running.")
-                }
-            if (($ps.ProcessName -like "*TMCCSF*") -or ($ps.ProcessName -like "*TmListen*") -or ($ps.ProcessName -like "*NTRtScan*"))
-                {
-                Write-Output ("Possible Trend Micro AV process " + $ps.ProcessName + " is running.")
-                }
-            if (($ps.ProcessName -like "*symantec antivirus*") -or ($ps.ProcessName -like "*SymCorpUI*") -or ($ps.ProcessName -like "*ccSvcHst*") -or ($ps.ProcessName -like "*SMC*")  -or ($ps.ProcessName -like "*Rtvscan*"))
-                {
-                Write-Output ("Possible Symantec AV process " + $ps.ProcessName + " is running.")
-                }
-            if ($ps.ProcessName -like "*mbae*")
-                {
-                Write-Output ("Possible MalwareBytes Anti-Exploit process " + $ps.ProcessName + " is running.")
-                }
-            #if ($ps.ProcessName -like "*mbam*")
-               # {
-               # Write-Output ("Possible MalwareBytes Anti-Malware process " + $ps.ProcessName + " is running.")
-               # }
-            #AppWhitelisting
-            if ($ps.ProcessName -like "*Parity*")
-                {
-                Write-Output ("Possible Bit9 application whitelisting process " + $ps.ProcessName + " is running.")
-                }
-            #Behavioral Analysis
-            if ($ps.ProcessName -like "*cb*")
-                {
-                Write-Output ("Possible Carbon Black behavioral analysis process " + $ps.ProcessName + " is running.")
-                }
-            if ($ps.ProcessName -like "*bds-vision*")
-                {
-                Write-Output ("Possible BDS Vision behavioral analysis process " + $ps.ProcessName + " is running.")
-                } 
-            if ($ps.ProcessName -like "*Triumfant*")
-                {
-                Write-Output ("Possible Triumfant behavioral analysis process " + $ps.ProcessName + " is running.")
-                }
-            if ($ps.ProcessName -like "CSFalcon")
-                {
-                Write-Output ("Possible CrowdStrike Falcon EDR process " + $ps.ProcessName + " is running.")
-                }
-            #Intrusion Detection
-            if ($ps.ProcessName -like "*ossec*")
-                {
-                Write-Output ("Possible OSSEC intrusion detection process " + $ps.ProcessName + " is running.")
-                } 
-            #Firewall
-            if ($ps.ProcessName -like "*TmPfw*")
-                {
-                Write-Output ("Possible Trend Micro firewall process " + $ps.ProcessName + " is running.")
-                } 
-            #DLP
-            if (($ps.ProcessName -like "dgagent") -or ($ps.ProcessName -like "DgService") -or ($ps.ProcessName -like "DgScan"))
-                {
-                Write-Output ("Possible Verdasys Digital Guardian DLP process " + $ps.ProcessName + " is running.")
-                }   
-            if ($ps.ProcessName -like "kvoop")
-                {
-                Write-Output ("Possible Unknown DLP process " + $ps.ProcessName + " is running.")
-                }                       
-            }
-    Write-Output "`n"
-
-    if ($DisableDomainChecks -eq $false)
-    {
-    #Domain Password Policy
-
-    $domain = "$env:USERDOMAIN"
-    Write-Output "[*] Domain Password Policy"
-            Try 
-            {
-                $DomainContext = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext("domain",$domain)
-                $DomainObject =[System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($DomainContext)
-                $CurrentDomain = [ADSI]"WinNT://$env:USERDOMAIN"
-                $Name = @{Name="DomainName";Expression={$_.Name}}
-	            $MinPassLen = @{Name="Minimum Password Length";Expression={$_.MinPasswordLength}}
-                $MinPassAge = @{Name="Minimum Password Age (Days)";Expression={$_.MinPasswordAge.value/86400}}
-	            $MaxPassAge = @{Name="Maximum Password Age (Days)";Expression={$_.MaxPasswordAge.value/86400}}
-	            $PassHistory = @{Name="Enforce Password History (Passwords remembered)";Expression={$_.PasswordHistoryLength}}
-	            $AcctLockoutThreshold = @{Name="Account Lockout Threshold";Expression={$_.MaxBadPasswordsAllowed}}
-	            $AcctLockoutDuration =  @{Name="Account Lockout Duration (Minutes)";Expression={if ($_.AutoUnlockInterval.value -eq -1) {'Account is locked out until administrator unlocks it.'} else {$_.AutoUnlockInterval.value/60}}}
-	            $ResetAcctLockoutCounter = @{Name="Observation Window";Expression={$_.LockoutObservationInterval.value/60}}
-	            $CurrentDomain | Select-Object $Name,$MinPassLen,$MinPassAge,$MaxPassAge,$PassHistory,$AcctLockoutThreshold,$AcctLockoutDuration,$ResetAcctLockoutCounter | format-list | Out-String
-
-            }
-            catch 
-            {
-                Write-Output "Error connecting to the domain while retrieving password policy."    
-
-            }
-    Write-Output "`n"
-
-    #Domain Controllers
-
-    Write-Output "[*] Domain Controllers"
-            Try 
-            {
-                $DomainContext = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext("domain",$domain)
-                $DomainObject =[System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($DomainContext)
-                $DCS = $DomainObject.DomainControllers
-                foreach ($dc in $DCS)
-                {
-                    $dc.Name
-                }
-            
-            }
-            catch 
-            {
-                Write-Output "Error connecting to the domain while retrieving listing of Domain Controllers."    
-
-            }
-       Write-Output "`n"
-   
-    #Domain Admins
-
-    Write-Output "[*] Domain Admins"
-            Try 
-            {
-                $DomainContext = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext("domain",$domain)
-                $DomainObject =[System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($DomainContext)
-            
-                $DAgroup = ([adsi]"WinNT://$domain/Domain Admins,group")
-                $Members = @($DAgroup.psbase.invoke("Members"))
-                [Array]$MemberNames = $Members | ForEach{([ADSI]$_).InvokeGet("Name")}
-                $MemberNames
-            }
-            catch 
-            {
-                Write-Output "Error connecting to the domain while retrieving Domain Admins group members."    
-
-            }
-       Write-Output "`n"
     }
-    If($Portscan)
-    {
-    if ($Portlist -ne "")
-    {
-    TCP-PortScan -Portlist $Portlist
-    }
-    else
-    {
-    TCP-PortScan -TopPorts $TopPorts
-    }
-    }
+    Write-Output ""
 
-    # Handle CSV export if the ExportCSV parameter was specified
-    If($ExportCSV)
-    {
-        $exportChoice = Read-Host -Prompt "Do you want to export results to CSV? (Y/N)"
+    # Domain Checks (if not disabled)
+    if ($DisableDomainChecks -eq $false) {
+        Write-Output "[*] Domain Information"
         
-        if ($exportChoice -eq "Y" -or $exportChoice -eq "y")
-        {
-            $defaultPath = "c:\temp\results.csv"
-            $customPath = Read-Host -Prompt "Enter the path to save the CSV file or press Enter to use the default ($defaultPath)"
+        # Domain Controllers
+        Try {
+            $DomainContext = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext("domain",$domain)
+            $DomainObject = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($DomainContext)
+            $DCS = $DomainObject.DomainControllers
             
-            $csvPath = if ([string]::IsNullOrWhiteSpace($customPath)) { $defaultPath } else { $customPath }
-            
-            # Create directory if it doesn't exist
-            $directory = Split-Path -Path $csvPath -Parent
-            if (!(Test-Path -Path $directory))
-            {
-                try {
-                    New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
-                    Write-Output "Created directory: $directory"
-                }
-                catch {
-                    Write-Output "Error creating directory: $_"
-                    return
+            Write-Output "Domain Controllers:"
+            foreach ($dc in $DCS) {
+                Write-Output "- $($dc.Name)"
+                $global:AllResults += [PSCustomObject]@{
+                    Category = "Domain Information"
+                    Item = "Domain Controller"
+                    Value = $dc.Name
                 }
             }
+        } Catch {
+            Write-Output "Unable to retrieve Domain Controllers."
+        }
+        
+        # Domain Admins
+        Try {
+            $DomainContext = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext("domain",$domain)
+            $DomainObject = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($DomainContext)
             
-            try {
-                # Export results to CSV
-                $global:AllResults | Export-Csv -Path $csvPath -NoTypeInformation -ErrorAction Stop
-                Write-Output "Results exported to $csvPath"
+            $DAgroup = ([adsi]"WinNT://$domain/Domain Admins,group")
+            $Members = @($DAgroup.psbase.invoke("Members"))
+            [Array]$MemberNames = $Members | ForEach{([ADSI]$_).InvokeGet("Name")}
+            
+            Write-Output "Domain Admins:"
+            foreach ($member in $MemberNames) {
+                Write-Output "- $member"
+                $global:AllResults += [PSCustomObject]@{
+                    Category = "Domain Information"
+                    Item = "Domain Admin"
+                    Value = $member
+                }
             }
-            catch {
-                Write-Output "Error exporting to CSV: $_"
-            }
+        } Catch {
+            Write-Output "Unable to retrieve Domain Admins."
+        }
+        Write-Output ""
+    }
+
+    # Port Scan (if enabled)
+    If($Portscan) {
+        if ($Portlist -ne "") {
+            TCP-PortScan -Portlist $Portlist
+        } else {
+            TCP-PortScan -TopPorts $TopPorts
         }
     }
+
+    # Handle CSV export
+    If($ExportCSV) {
+        try {
+            # Create directory if it doesn't exist
+            $directory = Split-Path -Path $defaultCSVPath -Parent
+            if (!(Test-Path -Path $directory)) {
+                New-Item -ItemType Directory -Path $directory -Force | Out-Null
+                Write-Output "[*] Created directory: $directory"
+            }
+            
+            # Export results to CSV
+            $global:AllResults | Export-Csv -Path $defaultCSVPath -NoTypeInformation
+            Write-Output "[*] Results exported to $defaultCSVPath"
+        } catch {
+            Write-Output "[!] Error exporting to CSV: $_"
+        }
+    }
+
+    Write-Output "[+] Scan completed at $(Get-Date)"
 }
 
 
